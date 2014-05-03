@@ -218,13 +218,7 @@ exports.init = function (config)
             {
                 if (ex.code == 'MODULE_NOT_FOUND')
                 {
-                    if (params.action != route.defaults.action)
-                    {
-                        $.extend(req.params, { controller: req.params.controller + '/' + req.params.action, action: undefined });
-                        arguments.callee(req, res, next);
-                    }
-                    else
-                        res.send(404, 'Not found');
+                    next();
                 }
                 else
                 {
