@@ -1,23 +1,39 @@
 var rawDebug=$('debug')('mvc');
+var Busboy = require('busboy');
 var debug=function(data){
 	rawDebug($('util').inspect(data));
 	};
 
 exports.init = function (config)
 {
-    var controller = function (controllerName, routeValues)
+    var controller = function (controllerName, routeValues, filePath)
     {
+        var self=this;
+		this.asset = function(assetPath)
+		{
+			assetPath=filePath.replace(/#type#.+$/, 'assets/')+assetPath;
+			var file=$('fs').createReadStream(assetPath);
+			file.pipe(this.response);
+
+		};
+		this.apply = function(action, args)
+		{
+			debug('applying');
+			debug(args);
+			var result=action.apply(this, args);
+			if(result)
+			{
+				self.send(result);
+			}
+		}
         this.redirect = function (redirectUrl)
         {
-            if (!redirectUrl)
-                return false;
-            this.response.setHeader("Location", redirectUrl);
-            this.send(302);
-            return true;
+			if(!redirectUrl)
+				return false;
+            self.response.redirect(redirectUrl);
         }
         this.redirectTo = function (action, controller)
         {
-            var self = this;
             for (var index in config.routes)
             {
                 var matcher = $('router/matcher.js')(config.routes[index]);
@@ -33,38 +49,42 @@ exports.init = function (config)
             if (typeof (name) != 'string')
             {
                 model = name;
-                name = 'index';
+                name = routeValues.action;
             }
             if (name.indexOf('.') > 0)
             {
                 extension = name.substr(name.indexOf('.'));
                 name = name.substr(0, name.indexOf('.'));
             }
-            var self = this;
+			var baseFile=filePath.replace('#type#', 'views').replace(controllerName+'.js', controllerName  + '/' + name);
             for (var i in config.engines)
             {
                 if (extension == null || extension == i)
                 {
-                    if ($('fs').existsSync('./views/' + controllerName + '/' + name + i))
+                    if ($('fs').existsSync(baseFile + i))
                     {
-                        debug('view : ./views/' + controllerName + '/' + name + i);
+                        debug('view : '+baseFile+ i);
                         switch (config.engines[i])
                         {
                             case "ejs":
-                                $('fs').readFile('./views/' + controllerName + '/' + name + i, function (data)
+                                $('fs').readFile(baseFile + i, function (data)
                                 {
                                     $(config.engines[i]).render(data, model, self.send);
                                 });
+                                break;
                             case "jade":
-                                self.send($(config.engines[i]).renderFile('./views/' + controllerName + '/' + name, model));
+                                self.send($(config.engines[i]).renderFile(baseFile + i, model));
+                                break;
                             case "jazz":
-                                $('fs').readFile('./views/' + controllerName + '/' + name + i, function (data)
+                                $('fs').readFile(baseFile + i, function (data)
                                 {
                                     $(config.engines[i]).compile(data).eval(model, self.send);
                                 });
+                                break;
                             case "bliss":
                                 var engine = new ($(config.engines[i]))({ ext: i });
-                                self.send(engine.render('./views/' + controllerName + '/' + name + i, model));
+                                self.send(engine.render(baseFile + i, model));
+                                break;
                         }
                         return;
                     }
@@ -84,30 +104,72 @@ exports.init = function (config)
             result = []
         return result
     };
-	
-	var tryShift=function(route, params, paramName, defaults)
+
+	function escapeRegExp(str) {
+	  return str.replace(/[\-\[\]\{\}\(\)\*\+\?\.\\\^\$\|]/g, "\\$&");
+	}
+
+	var tryShift=function(route, params, paramName, defaults, secondTry)
 	{
 		var keys=$('router/matcher.js')(route).keys;
+		if(route.endsWith('*'))
+			keys.push('wildcard');
+		debug(keys);
 		var paramIndex=keys.indexOf(paramName);
+		debug(paramIndex);
 		var result=$.extend({}, params);
 		if(paramIndex>=0)
 		{
-			debug(params);
-			if(typeof(params[keys[keys.length-1]])=='undefined')
+			if(typeof(params[keys[keys.length-1]])=='undefined' || keys[keys.length-1]=='wildcard' && typeof(params['wildcard'])=='undefined')
 			{
 				for(var i=keys.length-1; i>=paramIndex; i--)
 				{
-					result[keys[i]]=params[keys[i-1]] || defaults[keys[i]];
+					debug(keys[i]);
+					result[keys[i] || 'wildcard']=params[keys[i-1]] || defaults[keys[i]];
 				}
 				result[paramName]=defaults[paramName];
+			}
+			else if(keys[keys.length-1]=='wildcard' && typeof(params['wildcard'])!='undefined')
+			{
+				if($.isArray(result.wildcard))
+					result.wildcard.unshift(params[keys[keys.length-2]] || defaults.wildcard);
+				else if(result.wildcard!= (params[keys[keys.length-2]] || defaults.wildcard))
+					result.wildcard=[params[keys[keys.length-2]] || defaults.wildcard, result.wildcard];
+				for(var i=keys.length-2; i>=paramIndex; i--)
+				{
+					debug(keys[i]);
+					result[keys[i] || 'wildcard']=params[keys[i-1]] || defaults[keys[i]];
+				}
+				result[paramName]=defaults[paramName];
+			}
+			else if(secondTry && paramIndex>0)
+			{
+				//shift
+				var nextValue= params[keys[paramIndex]];
+				result[keys[paramIndex]]=params[keys[paramIndex-1]] || defaults[keys[paramIndex]];
+				result[keys[paramIndex-1]]=nextValue;
+				
+				debug('replaced '+keys[paramIndex-1]+' by '+result[keys[paramIndex]])
 			}
 			else
 			{
 				//swap
 				var nextValue= params[keys[paramIndex]];
-				result[keys[paramIndex]]=params[keys[paramIndex+1]];
-				result[keys[paramIndex+1]]=nextValue;
+				result[keys[paramIndex]]=params[keys[paramIndex+1]] || defaults[keys[paramIndex]];
+				result[keys[paramIndex+1] || 'wildcard']=nextValue;
+
+				debug('replaced '+keys[paramIndex-1]+' by '+result[keys[paramIndex]])
 			}
+		}
+		if(typeof(result['*'])!='undefined')
+		{
+			if($.isArray(result.wildcard))
+			{
+				if(result.wildcard.indexOf(result['*'])<0)
+					result.wildcard.push(result['*']);
+			}
+			else if(result.wildcard!=result['*'])
+				result.wildcard=[result.wildcard, result['*']];
 		}
 		return result;
 	}
@@ -116,109 +178,173 @@ exports.init = function (config)
     {
 		// debug(route);
 		if(typeof(route)=='string')
-			route={route:route, defaults:{controller:"home", action:"index"}};
+			route={route:route};
 		else
 			route.defaults=$.extend({}, {controller:"home", action:"index"}, route.constraint, route.defaults);
 	
-        $(function (req, res, next)
+		route=$.extend(true, {filePath:"./controllers/{controller}.js", defaults:{controller:"home", action:"index"}}, {defaults:route.constraint}, route);
+		route.file={path:route.filePath, keys:$('router/matcher.js')(route.filePath).keys};
+
+        $(function (req, res, next, secondTry)
         {
-			var params=$.extend({},req.params);
-		
-            if (typeof (params.controller) == 'undefined')
-                params.controller = route.defaults.controller;
-            if (typeof (params.action) == 'undefined')
-                params.action = route.defaults.action;
-				
-			debug(params);
-			if(typeof(route.constraint)!='undefined')
+            secondTry=secondTry || 0;
+			var params=$.extend({}, route.defaults, req.params);
+
+			if(req.method.toLowerCase()!=='get' && params.action===route.defaults.action)
 			{
-				var invalidConstraints=0;
+				params.action=req.method.toLowerCase();
+			}
+			
+			var filePath=route.file.path;
+			$.each(route.file.keys, function(index, key){
+				if(key!="#type")
+					filePath=filePath.replace(new RegExp('{'+escapeRegExp(key)+'}\\??'), params[key]);
+				else
+					filePath=filePath.replace(new RegExp('{'+escapeRegExp(key)+'}\\??'), '#type#');
+			});
+
+			filePath=filePath.replace(/\/undefined\//g, '/');
+			var controllerFilePath=filePath.replace('#type#', 'controllers');
+			var invalidConstraints=0;
+			if(route.constraint)
+			{
 				$.each(route.constraint, function(key, value){
-					if(params[key]!=value)
+					if(params[key]==value)
 					{
 						debug(params[key]+'!='+value)
 						invalidConstraints++;
 					}
 				});
-				if(invalidConstraints>0)
-				{
-					if(params.controller!=route.defaults.controller)
-					{
-						debug('controller shift');
-						debug(params);
-						params=tryShift(route.route, req.params, 'controller', route.defaults);
-						debug(params);
-						$.extend(req.params, params);
-						return arguments.callee(req,res,next);
-					}
-					return next();
-				}
 			}
-
+			if(invalidConstraints>0 || !$('fs').existsSync(controllerFilePath))
+			{
+				debug(invalidConstraints);
+				debug(controllerFilePath);
+				debug(secondTry);
+				if(params.controller!=route.defaults.controller && secondTry<2)
+				{
+					debug('controller shift');
+					debug(params);
+					params=tryShift(route.route, req.params, 'controller', route.defaults, secondTry);
+					debug(params);
+					req.params=params;
+					return arguments.callee(req,res,next, secondTry+1);
+				}
+				return next();
+			}
+			
             try
             {
-                var c = controller.call({ send: res.send, request: req, next: next, response: res }, params.controller);
-                var action = $('./controllers/' + params.controller)[params.action];
+                var self=$(controllerFilePath);
+                $.extend(self, { send: res.send, request: req, callback: next, response: res });
+                var c = controller.call(self, params.controller, params, filePath);
+				debug(filePath);
+				debug(params);
+                var action = $(controllerFilePath)[params.action];
 				var actionBasedOnMethod=false;
                 var s = "";
                 if (!action)
 				{
-					action = $('./controllers/' + params.controller)[req.method.toLowerCase()];
+					action = $(controllerFilePath)[req.method.toLowerCase()];
 					actionBasedOnMethod=true;
 				}
                 if (!action)
-                    res.send(404, 'Not found');
+				{
+					debug('no action found');
+                    next();
+				}
                 else
                 {
 					if(actionBasedOnMethod)
 					{
 						debug('action shift');
-						debug(params);
-						params=tryShift(route.route, params, 'action', {action:req.method.toLowerCase()});
+						params=tryShift(route.route, params, 'action', route.defaults);
 						debug(params);
 					}
                     var argNames = getParamNames(action);
                     var args = [];
                     var waitingForAsync = 0;
-					// console.log(argNames);
-                    $.each(argNames, function(arg)
+					debug(argNames);
+                    $.each(argNames, function(arg, argName)
                     {
-                        if (req.query[argNames[arg]])
-                            args[arg] = req.query[argNames[arg]];
-                        if (params[argNames[arg]])
-                            args[arg] = params[argNames[arg]];
+                        if (req.query[argName])
+                            args[arg] = req.query[argName];
+                        if (params[argName])
+                            args[arg] = params[argName];
+						if (argNames[arg] == 'callback')
+							args[arg] = c.send;
                         if (argNames[arg] == 'routeValues')
                             args[arg] = params;
-                        if (argNames[arg] == 'body')
+                        if (argNames[arg] == 'body' && typeof(req.headers['content-type'])!='undefined')
                         {
-                            waitingForAsync++;
-                            args[arg] = "";
-                            req.on('data', function (chunk)
+                            console.log(req.headers['content-type']);
+                            if(req.headers['content-type'].startsWith('multipart/form-data'))// || req.headers['content-type'].startsWith('application/x-www-form-urlencoded'))
                             {
-                                args[arg] += chunk;
-								// console.log(chunk);
-                            });
-                            req.on('end', function ()
-                            {
-								console.log('end');
-                                if (req.headers['content-type'] == 'application/json')
-                                    args[arg] = JSON.parse(args[arg]);
-                                waitingForAsync--;
-								// console.log(params);
-                                if (!waitingForAsync)
-                                    action.apply(c, args);
-                            });
+                                args[arg]={};
+                                var multiparty=require('multiparty');
+                                console.log(multiparty);
+                                var form=new multiparty.Form();
+                                console.log('multiparty');
+                                form.on('part', function(part){
+                                    console.log('part:'+part.name);
+                                    var bufs=[];
+                                    waitingForAsync++;
+                                    part.on('data', function(chunk){ console.log(chunk); bufs.push(chunk) });
+                                    part.on('end', function(chunk){ 
+                                        args[arg][part.name]=Buffer.concat(bufs);
+                                        if(!part.filename)
+                                            args[arg][part.name]=args[arg][part.name].toString('utf8');
+                                        waitingForAsync--;
+                                        if(!waitingForAsync)
+                                            c.apply(action, args);
+                                    });
+                                });
+                                form.on('close', function() {
+                                    waitingForAsync--;
+                                    if(!waitingForAsync)
+                                        c.apply(action, args);
+                                });
+                                waitingForAsync++;
+                                form.parse(req);
+                            }
+                            else
+							{
+								var bodyParser=require('body/any');
+								waitingForAsync++;
+								bodyParser(req, function(err, body){
+								    if(err)
+								        console.log(err);
+							        console.log(body);
+							        console.log(err);
+									args[arg]=body;
+									waitingForAsync--;
+									if(!waitingForAsync)
+										c.apply(action, args);
+								});
+							}
                         }
                     });
+
                     if (!waitingForAsync)
-                        action.apply(c, args);
+					{
+                        c.apply(action, args);
+					}
                 }
             }
             catch (ex)
             {
                 if (ex.code == 'MODULE_NOT_FOUND')
                 {
-                    next();
+                    if (params.action != route.defaults.action)
+                    {
+                        $.extend(req.params, { controller: req.params.controller + '/' + req.params.action, action: undefined });
+                        arguments.callee(req, res, next);
+                    }
+                    else
+					{
+						debug('no controller found');
+                        next();
+					}
                 }
                 else
                 {
