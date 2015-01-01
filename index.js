@@ -1,5 +1,4 @@
 var rawDebug=$('debug')('mvc');
-var Busboy = require('busboy');
 var debug=function(data){
 	rawDebug($('util').inspect(data));
 	};

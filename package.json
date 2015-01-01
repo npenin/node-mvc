@@ -1,0 +1,16 @@
+{
+	"name":";vc",
+	"version":"0.2",
+	"repository":{
+		"type":"git",
+		"url":"https://github.com/npenin/node-mvc.git"
+	},
+	"dependencies":
+	{
+		"debug":"latest",
+		"router":"latest",
+		"multiparty":"lastest",
+		"body":"lastest",
+		"jnode":"npenin/jnode",
+	}
+}
