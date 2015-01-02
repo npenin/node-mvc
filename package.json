@@ -1,6 +1,6 @@
 {
 	"name":"mvc",
-	"version":"0.2",
+	"version":"0.2.0",
 	"repository":{
 		"type":"git",
 		"url":"https://github.com/npenin/node-mvc.git"
