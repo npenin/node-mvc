@@ -9,8 +9,8 @@
 	{
 		"debug":"latest",
 		"router":"latest",
-		"multiparty":"lastest",
-		"body":"lastest",
+		"multiparty":"latest",
+		"body":"latest",
 		"jnode":"npenin/jnode"
 	}
 }
