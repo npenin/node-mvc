@@ -1,5 +1,5 @@
 {
-	"name":";vc",
+	"name":"mvc",
 	"version":"0.2",
 	"repository":{
 		"type":"git",
@@ -11,6 +11,6 @@
 		"router":"latest",
 		"multiparty":"lastest",
 		"body":"lastest",
-		"jnode":"npenin/jnode",
+		"jnode":"npenin/jnode"
 	}
 }
